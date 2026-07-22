@@ -1,5 +1,5 @@
 ---
-title: The locks that taught me about deadlocks and isolation levels.
+title: On locks, deadlocks and isolation levels.
 description: A follow-up on SELECT FOR UPDATE — what happens once locking works, and the new problems it quietly introduces.
 date: 2026-07-22 18:00:00 +0300
 categories: [Backend, Databases]
@@ -82,7 +82,7 @@ Locking rows in `id` order everywhere means two transactions can never hold each
 **4. Fail fast or step aside when you can.** Two clauses are worth knowing:
 
 - `FOR UPDATE NOWAIT` — if the row is already locked, don't queue; raise an error immediately. Good when waiting is pointless and you'd rather tell the user "try again."
-- `FOR UPDATE SKIP LOCKED` — skip rows that are currently locked and move on. This is the classic pattern for **job queues** and "grab the next available item," where any free row will do. It's *not* what you want for "book *this specific* slot" there you actually need that one row — but it's a superpower for worker pools pulling from a shared table.
+- `FOR UPDATE SKIP LOCKED` — skip rows that are currently locked and move on. This is the classic pattern for **job queues** and "grab the next available item," where any free row will do. It's *not* what you want for "book *this specific* slot" there you actually need that one row but it's a superpower for worker pools pulling from a shared table.
 
 **5. Expect deadlocks and retry.** Under real concurrency you can't eliminate them entirely, so treat them as a normal, recoverable condition. Because the victim transaction was rolled back completely, it's safe to run the *whole* transaction again:
 
@@ -107,7 +107,7 @@ Retry the entire block, not just the last statement, add a small backoff, and ca
 
 Deadlocks are the dramatic failure. The quieter one is **contention** and it hurts performance even when nothing ever deadlocks.
 
-Locks serialize access to a row. If a hundred people try to book against the same hot row at once, `SELECT FOR UPDATE` turns that into a queue: one at a time, everyone else waiting. Correctness is preserved, but throughput on that row collapses. The mitigation is the same instinct as before — keep the critical section tiny so each holder releases the lock quickly but it's also worth knowing you don't always have to reach for a pessimistic lock at all:
+Locks serialize access to a row. If a hundred people try to book against the same hot row at once, `SELECT FOR UPDATE` turns that into a queue: one at a time, everyone else waiting. Correctness is preserved, but throughput on that row collapses. The mitigation is the same instinct as before keep the critical section tiny so each holder releases the lock quickly but it's also worth knowing you don't always have to reach for a pessimistic lock at all:
 
 - **Optimistic locking.** Add a `version` column. Read the row (no lock), do your work, then `UPDATE ... WHERE id = ? AND version = ?`. If zero rows were affected, someone changed it first you retry. No lock is held between read and write, so there's nothing to contend on. This shines when conflicts are *rare*; if they're common, all the retries make it slower than just locking.
 
@@ -125,19 +125,19 @@ Bala's second suggestion was to look at isolation levels, and it turns out my or
 
 The four standard levels are defined by which of these they forbid:
 
-| Isolation level    | Dirty read | Non-repeatable read | Phantom read |
-| ------------------ | ---------- | ------------------- | ------------ |
-| Read Uncommitted   | Possible   | Possible            | Possible     |
-| Read Committed     | Prevented  | Possible            | Possible     |
-| Repeatable Read    | Prevented  | Prevented           | Possible*    |
-| Serializable       | Prevented  | Prevented           | Prevented    |
+| Isolation level  | Dirty read | Non-repeatable read | Phantom read |
+| ---------------- | ---------- | ------------------- | ------------ |
+| Read Uncommitted | Possible   | Possible            | Possible     |
+| Read Committed   | Prevented  | Possible            | Possible     |
+| Repeatable Read  | Prevented  | Prevented           | Possible*    |
+| Serializable     | Prevented  | Prevented           | Prevented    |
 
 A couple of real-world footnotes, because the defaults surprise people:
 
 - **PostgreSQL defaults to Read Committed.** It also never allows dirty reads at all asking for Read Uncommitted just gives you Read Committed. And its Repeatable Read uses snapshot isolation that, in practice, *also* prevents phantoms which is why I starred that cell.
 - **MySQL/InnoDB defaults to Repeatable Read.**
 
-So my booking bug was, precisely, a **Read Committed** anomaly. Between my "is this slot free?" read and my "book it" write, another committed transaction changed the answer under me. That reframes the fix in a useful way — there are actually two ways to solve it:
+So my booking bug was, precisely, a **Read Committed** anomaly. Between my "is this slot free?" read and my "book it" write, another committed transaction changed the answer under me. That reframes the fix in a useful way there are actually two ways to solve it:
 
 - **Pessimistically**, with `SELECT FOR UPDATE`: lock the row so no one else can touch it until I commit. That's what I did.
 - **Optimistically**, by running the transaction at **Serializable** isolation: the database watches for exactly this kind of interference and, if it detects it, aborts one transaction with a serialization failure which I catch and retry (the same retry pattern as deadlocks).
