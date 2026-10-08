@@ -3,8 +3,8 @@
 # Run jekyll serve and then launch the site
 
 prod=false
-command="bundle exec jekyll s -l"
-host="127.0.0.1"
+command="bundle exec jekyll s -l --future"
+host="0.0.0.0"
 
 help() {
   echo "Usage:"
