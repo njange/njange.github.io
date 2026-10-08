@@ -1,7 +1,7 @@
 ---
 layout: post
 title: "Lustre, a supercomputer filesystem."
-date: 2026-10-08 18:00:00 +0300
+date: 2026-10-08 12:00:00 +0300
 description: >
   A first-principles walk through Lustre, the parallel file system behind
   most of the world's supercomputers, and why its internals look so much
